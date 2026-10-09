@@ -514,12 +514,68 @@ class TestEvidenceAndRendering:
 
     def test_frame_rendering_has_expected_columns(self) -> None:
         frame = decide(make_inputs(), _FakeValidity(), BASE).to_frame()
-        assert list(frame.columns) == ["criterion", "passed", "detail"]
+        assert list(frame.columns) == ["view", "criterion", "passed", "detail"]
+
+    def test_every_check_is_labelled_with_a_view(self) -> None:
+        """Checks must declare which lens produced them.
+
+        Without this the checklist reads as nine independent confirmations,
+        when in fact every one is a summary of the same 2x2 table.
+        """
+        result = decide(make_inputs(), _FakeValidity(), BASE)
+        assert all(check.view for check in result.evidence)
+
+    def test_views_cover_all_three_lenses(self) -> None:
+        grouped = decide(make_inputs(), _FakeValidity(), BASE).evidence_by_view()
+        assert {"frequentist", "bayesian", "business"} <= set(grouped)
+
+    def test_grouping_preserves_every_check(self) -> None:
+        result = decide(make_inputs(), _FakeValidity(), BASE)
+        grouped = result.evidence_by_view()
+        assert sum(len(v) for v in grouped.values()) == len(result.evidence)
+
+    def test_summary_states_the_evidence_is_correlated(self) -> None:
+        text = decide(make_inputs(), _FakeValidity(), BASE).summary()
+        assert "not" in text and "independent" in text
+        assert "same" in text
+
+    def test_decision_states_the_refusal_policy(self) -> None:
+        """The OR/AND asymmetry must be visible in the output, not just docs."""
+        result = decide(
+            make_inputs(
+                relative_difference=-0.012,
+                relative_hdi_lower=-0.030,
+                relative_hdi_upper=0.006,
+                probability_clears_threshold=0.012,
+                probability_treatment_better=0.12,
+                expected_revenue_delta=-5_188.0,
+            ),
+            _FakeValidity(),
+            BASE,
+        )
+        text = result.summary()
+        assert "any one" in text
+        assert "Refusal triggered by:" in text
+
+    def test_refusal_reports_how_many_grounds(self) -> None:
+        result = decide(
+            make_inputs(
+                relative_difference=-0.012,
+                relative_hdi_lower=-0.030,
+                relative_hdi_upper=0.006,
+                probability_clears_threshold=0.012,
+                probability_treatment_better=0.12,
+                expected_revenue_delta=-5_188.0,
+            ),
+            _FakeValidity(),
+            BASE,
+        )
+        assert any("Refused on" in r for r in result.reasoning)
 
     def test_summary_is_renderable(self) -> None:
         text = decide(make_inputs(), _FakeValidity(), BASE).summary()
         assert "DECISION: SHIP" in text
-        assert "Evidence:" in text
+        assert "Business view:" in text
 
     def test_thresholds_are_injected_not_read_from_state(self) -> None:
         """The same inputs give different outcomes under different thresholds."""

@@ -300,24 +300,48 @@ def calibration_figure(p_values: np.ndarray, alpha: float = 0.05) -> go.Figure:
     return figure
 
 
+SUMMARY_ROWS: frozenset[str] = frozenset({"analysis_population"})
+"""Reconciliation rows that restate the total rather than forming a stage."""
+
+
 def cleaning_waterfall_figure(reconciliation: pd.DataFrame) -> go.Figure:
-    """Population at each cleaning stage, including the raw starting point."""
-    stages = list(reconciliation["after"])
-    labels = list(reconciliation["step"])
+    """Population through the cleaning pipeline, stage by stage.
+
+    A Plotly waterfall treats ``measure="relative"`` entries as *deltas* and adds
+    them to a running total. The reconciliation table stores cumulative
+    ``after`` counts, so feeding those straight in double-counts every stage -
+    this chart once reported 1.15 million users from a 294k dataset. Only the
+    first row is drawn as an absolute level; the rest are drawn as the negative
+    of what each step removed, and the closing summary row is excluded because
+    it restates the total rather than describing a transformation.
+    """
+    stages = reconciliation[~reconciliation["step"].isin(SUMMARY_ROWS)]
+    if stages.empty:
+        raise ValueError("Reconciliation table contains no cleaning stages to plot")
+
+    opening = int(stages["after"].iloc[0])
+    removals = [-int(value) for value in stages["removed"].iloc[1:]]
+
     figure = go.Figure(
         go.Waterfall(
             orientation="v",
-            measure=["absolute"] + ["relative"] * (len(stages) - 1),
-            x=labels,
-            y=stages,
+            measure=["absolute"] + ["relative"] * len(removals),
+            x=list(stages["step"]),
+            y=[opening, *removals],
+            decreasing={"marker": {"color": "#C62828"}},
+            increasing={"marker": {"color": "#2E7D32"}},
             connector={"line": {"color": "#888888"}},
+            text=[f"{opening:,}", *[f"-{abs(v):,}" for v in removals]],
+            textposition="outside",
+            hovertemplate="%{x}<br>%{y:,d} users<extra></extra>",
         )
     )
     figure.update_layout(
         title="Population through the cleaning pipeline",
         yaxis_title="users",
-        height=340,
-        margin={"t": 60, "b": 80},
+        yaxis_rangemode="tozero",
+        height=360,
+        margin={"t": 60, "b": 90},
     )
     return figure
 

@@ -38,6 +38,8 @@ from experimentlens.data.loader import (  # noqa: E402
 )
 from experimentlens.data.schema import validate_schema  # noqa: E402
 from experimentlens.stats.decision import (  # noqa: E402
+    CORRELATED_EVIDENCE_NOTE,
+    VIEW_TITLES,
     DecisionResult,
     ExperimentReport,
     analyse_and_decide,
@@ -248,6 +250,12 @@ def render_inference(report: ExperimentReport) -> None:
         "A p-value below alpha says the data would be unlikely under no effect; it "
         "says nothing about whether the effect is worth having."
     )
+    st.caption(
+        "This p-value is two-sided. The power and MDE figures in section 5 are "
+        "one-sided, matching the pre-registered hypothesis that treatment beats "
+        "control; a one-sided test is the more powerful design for that hypothesis, "
+        "so the two are not directly comparable."
+    )
 
     st.subheader("4. Bayesian")
     posterior_column, lift_column = st.columns(2)
@@ -276,7 +284,15 @@ def render_inference(report: ExperimentReport) -> None:
         f"P(lift > {thresholds.min_practical_lift_rel:.0%})",
         f"{inputs.probability_clears_threshold:.2%}",
     )
-    metrics[2].metric("Expected revenue change", f"{inputs.expected_revenue_delta:+,.0f}")
+    metrics[2].metric(
+        "Modelled revenue change",
+        f"{inputs.expected_revenue_delta:+,.0f}",
+        help=(
+            "Posterior mean of (pB - pA) x control users x revenue per conversion. "
+            "A modelled quantity, not observed revenue; it scales linearly with the "
+            "revenue assumption."
+        ),
+    )
     metrics[3].metric(
         f"{thresholds.hdi_mass:.0%} HDI upper (relative)", f"{inputs.relative_hdi_upper:+.2%}"
     )
@@ -308,15 +324,31 @@ def render_design(report: ExperimentReport) -> None:
 
 
 def render_decision(decision: DecisionResult) -> None:
-    """Render the evidence checklist and recommendation."""
+    """Render the evidence by lens, then the recommendation."""
     st.subheader("6. Decision")
-    st.dataframe(decision.to_frame(), hide_index=True, width="stretch")
+    st.caption(CORRELATED_EVIDENCE_NOTE)
+
+    for view, checks in decision.evidence_by_view().items():
+        st.markdown(f"**{VIEW_TITLES.get(view, view)}**")
+        for check in checks:
+            mark = "PASS" if check.passed else "fail"
+            st.write(f":{'white_check_mark' if check.passed else 'x'}: {mark} — **{check.name}**  ")
+            st.caption(check.detail)
+
+    st.markdown("**Reasoning**")
     for reason in decision.reasoning:
         st.markdown(f"- {reason}")
+
     if decision.design_notes:
         st.markdown("**Design notes**")
         for note in decision.design_notes:
             st.markdown(f"- {note}")
+
+    if decision.notes:
+        st.markdown("**Policy and triggers**")
+        for note in decision.notes:
+            st.caption(note)
+
     st.markdown("**Recommended action**")
     st.info(decision.recommended_action)
 

@@ -118,20 +118,70 @@ class TestCalibrationFigure:
 
 
 class TestCleaningWaterfallFigure:
-    def test_one_bar_per_stage(self) -> None:
-        reconciliation = pd.DataFrame(
+    """Regression cover for a real defect.
+
+    Feeding the reconciliation table's cumulative ``after`` counts into a Plotly
+    waterfall produced a chart topping out at 1,154,551 users for a 294,478-row
+    dataset, because ``measure="relative"`` entries are read as deltas and
+    added to the running total. These tests pin the total to the analysis
+    population so the chart can never overstate it again.
+    """
+
+    @staticmethod
+    def _reconciliation() -> pd.DataFrame:
+        return pd.DataFrame(
             {
-                "step": ["raw_load", "resolve_duplicate_users", "analysis_population"],
-                "after": [100, 90, 90],
+                "step": [
+                    "raw_load",
+                    "resolve_duplicate_users",
+                    "remove_contaminated_rows",
+                    "analysis_population",
+                ],
+                "before": [0, 294_478, 286_691, 294_478],
+                "removed": [0, 7_787, 0, 7_787],
+                "after": [294_478, 286_691, 286_691, 286_691],
             }
         )
-        figure = viz.cleaning_waterfall_figure(reconciliation)
-        assert len(figure.data[0].x) == 3
 
-    def test_first_measure_is_absolute(self) -> None:
-        reconciliation = pd.DataFrame({"step": ["raw_load", "clean"], "after": [100, 90]})
-        figure = viz.cleaning_waterfall_figure(reconciliation)
-        assert figure.data[0].measure[0] == "absolute"
+    @staticmethod
+    def _running_total(figure: go.Figure) -> int:
+        total = 0.0
+        for kind, value in zip(figure.data[0].measure, figure.data[0].y, strict=True):
+            total = value if kind == "absolute" else total + value
+        return int(total)
+
+    def test_running_total_equals_the_analysis_population(self) -> None:
+        figure = viz.cleaning_waterfall_figure(self._reconciliation())
+        assert self._running_total(figure) == 286_691
+
+    def test_running_total_never_exceeds_the_raw_population(self) -> None:
+        figure = viz.cleaning_waterfall_figure(self._reconciliation())
+        assert self._running_total(figure) <= 294_478
+
+    def test_only_the_first_stage_is_absolute(self) -> None:
+        measures = list(viz.cleaning_waterfall_figure(self._reconciliation()).data[0].measure)
+        assert measures[0] == "absolute"
+        assert set(measures[1:]) <= {"relative"}
+
+    def test_removals_are_drawn_as_negative(self) -> None:
+        figure = viz.cleaning_waterfall_figure(self._reconciliation())
+        assert list(figure.data[0].y)[1:] == [-7_787, 0]
+
+    def test_summary_row_is_excluded(self) -> None:
+        """The closing row restates the total; it is not a transformation."""
+        figure = viz.cleaning_waterfall_figure(self._reconciliation())
+        assert "analysis_population" not in list(figure.data[0].x)
+
+    def test_empty_reconciliation_raises(self) -> None:
+        with pytest.raises(ValueError, match="no cleaning stages"):
+            viz.cleaning_waterfall_figure(pd.DataFrame({"step": [], "after": []}))
+
+    def test_real_pipeline_reconciles(self, loaded_raw: object) -> None:
+        from experimentlens.data.clean import clean_experiment
+
+        result = clean_experiment(loaded_raw)  # type: ignore[arg-type]
+        figure = viz.cleaning_waterfall_figure(result.reconciliation())
+        assert self._running_total(figure) == result.n_rows_clean
 
 
 class TestPosteriorPlotRange:

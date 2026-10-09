@@ -31,10 +31,35 @@ A non-significant p-value alone would only mean *"not proven."* The
 recommendation rests on a stronger claim — the interval **excludes the
 worthwhile range** — which is why the verdict is a refusal rather than a shrug.
 
+> **On correlated evidence.** The frequentist interval, the posterior interval,
+> `P(B > A)` and the observed lift are **not** independent confirmations. They
+> are four summaries of the same 2×2 table of conversion counts. The dashboard
+> groups them into *Frequentist view / Bayesian view / Business view* and says
+> so explicitly, because agreement between them shows the conclusion is robust
+> to how you summarise it — it does not multiply the evidence.
+
 A design finding is reported alongside it: the minimum detectable effect was
 **+2.53%**, above the 1% practical threshold, so this experiment was never able
 to settle the question it was run to answer. That is surfaced as a warning and
 does **not** override the evidence.
+
+### How the decision rule is meant to work
+
+The two gates are deliberately asymmetric, and this is a policy choice rather
+than an accident:
+
+```
+SHIP        requires ALL  4 criteria to pass
+DON'T SHIP  requires ANY ONE of 3 criteria
+```
+
+Refusing a change is reversible — the experiment can be rerun. Shipping a
+regression is not. Each refusing criterion also stands on its own merits:
+nothing worth shipping exists in the credible range, or the action has negative
+expected value, or the change is more likely neutral-to-worse than better.
+A policy requiring two refusing criteria was considered and rejected: it makes
+the engine *more* willing to ship, which is the wrong direction for a change
+nobody is obliged to make.
 
 ---
 
@@ -46,7 +71,7 @@ does **not** override the evidence.
 | Bayesian inference | PyMC Beta-Binomial, `P(B>A)`, 94% HDI, posterior expected revenue |
 | Experiment design | Power, MDE, required sample size, achieved vs analytic power |
 | Causal / decision discipline | Validity gates, minimum practical lift, three-outcome decision engine |
-| Engineering | `src/` layout, 349 tests, mypy strict, ruff, Streamlit dashboard, Docker |
+| Engineering | `src/` layout, 367 tests, mypy strict, ruff, GitHub Actions CI, Streamlit dashboard |
 
 ---
 
@@ -102,6 +127,16 @@ of four dispositions before any rate is computed:
 
 Null p-values are uniform (KS p = 0.09), and empirical power matches the
 closed-form calculation to **±0.004** at every sample size, one- and two-sided.
+The power and MDE figures were additionally reproduced by hand — a
+from-scratch noncentral-normal calculation reproduces the package's MDE
+(+2.5272% vs +2.5273%) and required sample size (619,975 vs 620,235).
+
+**Power is one-sided, the reported p-value is two-sided.** `power.py` defaults to
+`alternative="larger"`, matching the pre-registered hypothesis that treatment
+beats control; the p-value is reported two-sided as a more conservative summary.
+A one-sided test is the more powerful design for a directional hypothesis, so
+the two figures are **not** directly comparable. This is stated wherever both
+appear.
 
 **SRM is reported on every candidate population**, not only the one that drives
 the decision, so the conclusion can be shown not to depend on the choice:
@@ -195,10 +230,25 @@ Key tests, by intent:
   sub-threshold lift cannot produce SHIP at any alpha
 - `test_p_value_is_not_a_decision_criterion` — changing only the p-value does not
   change the outcome
+- `test_waterfall_running_total_equals_the_analysis_population` — regression
+  cover for a chart that once reported 1.15M users from a 294k dataset
 - `test_sampled_probability_matches_closed_form` — the PyMC posterior agrees with
   the exact conjugate answer
 - `test_empirical_power_matches_analytic` — simulation agrees with the closed form
 - `test_no_streamlit_in_package` — the layer boundary is mechanical, not a comment
+
+---
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every push and pull request:
+
+- `ruff check` and `ruff format --check`
+- `mypy` (strict)
+- `pytest`
+- wheel build
+- a headless dashboard smoke test that boots Streamlit and waits for a
+  response, so a broken import fails CI rather than the demo
 
 ---
 
@@ -223,12 +273,17 @@ Declared in `src/experimentlens/config.py`, not read from UI state:
 
 Stated plainly, because a result that hides its caveats is worth less:
 
-- **Revenue per conversion is a placeholder.** The expected-revenue figures scale
-  linearly with it; the *sign* of the conclusion does not depend on the value.
+- **Revenue per conversion is a placeholder.** The modelled revenue figures are
+  the posterior mean of `(pB − pA) × control users × revenue per conversion` — a
+  *modelled* quantity, not observed revenue. They scale linearly with the
+  assumption, though the *sign* of the conclusion does not depend on its value.
 - **The 1% practical lift is assumed, not derived.** It should come from the
   business's own margin. The dashboard exposes it as a control so the decision
-  can be re-run at different thresholds — moving it to 0.1% or 5% flips or
-  preserves the verdict accordingly.
+  can be re-run at different thresholds.
+- **Power and MDE are one-sided; the reported p-value is two-sided.** See above.
+  Both are defensible, but they describe different tests.
+- **The frequentist and Bayesian results are not independent evidence.** They are
+  summaries of one dataset.
 - **The Wald z-test is asymptotic.** With ~143k users per arm it is safe here,
   but it would not be for small counts; a Fisher exact test would be preferable
   there.

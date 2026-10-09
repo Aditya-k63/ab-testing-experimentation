@@ -59,8 +59,8 @@ dev = [
 ]
 
 [project.urls]
-Repository = "https://github.com/aditya/experimentlens"
-Issues = "https://github.com/aditya/experimentlens/issues"
+Repository = "https://github.com/Aditya-k63/ab-testing-experimentation"
+Issues = "https://github.com/Aditya-k63/ab-testing-experimentation/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/experimentlens"]

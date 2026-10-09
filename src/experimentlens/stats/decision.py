@@ -27,12 +27,44 @@ construction. `min_practical_lift_rel` is a business quantity, alpha is a
 statistical one, and no configuration of the thresholds lets a p-value stand in
 for the other.
 
+On the asymmetry between the two gates: shipping requires **every** criterion
+to pass, while refusing requires **any one**. That is deliberate and it is
+worth stating plainly rather than leaving to be inferred from the code.
+
+The asymmetry is conservative in the safe direction. Refusing a change is
+reversible - the experiment can be rerun - whereas shipping a regression is
+not. It also matches the asymmetry of the evidence: SHIP is a claim that a
+change is *worthwhile*, which ought to require more than any single optimistic
+reading supports, while DON'T_SHIP is a refusal to act, which only needs one
+sound reason.
+
+Each refusing criterion stands on its own merits without corroboration:
+
+* the credible interval lies below the practical threshold - nothing worth
+  shipping exists anywhere in the credible range;
+* expected revenue is negative - the action has negative expected value, which
+  is sufficient on its own;
+* the posterior probability of an improvement is at or below the declared
+  threshold - the change is more likely to be neutral-to-worse than better.
+
+The alternative policy - requiring two refusing criteria before refusing - was
+considered and rejected. It makes the engine *more* willing to ship, which is
+the wrong direction for a change nobody is obliged to make, and altering the
+rules to loosen a live verdict would be exactly the wrong reason to touch them.
+
 On power: observed-effect power is *not* used to gate the outcome. It is a
 function of the estimate it is meant to inform, so letting it decide would be
 circular. What is reported instead is whether the design could have resolved
 the business question at all - if the minimum detectable effect exceeds the
 practical threshold, the experiment was never capable of settling it, and that
 is stated as a design finding.
+
+On correlated evidence: the criteria below are *not* independent
+confirmations. Every one of them is a different summary of the same underlying
+2x2 table of conversion counts. They are grouped into frequentist, Bayesian and
+business views precisely so they are not mistaken for three separate sources of
+evidence, and the rendered output says so. Two summaries agreeing tells you the
+result is robust to how you summarise it; it does not multiply the evidence.
 """
 
 from __future__ import annotations
@@ -50,6 +82,29 @@ if TYPE_CHECKING:
 
 DecisionOutcome = Literal["SHIP", "DONT_SHIP", "INCONCLUSIVE"]
 
+EvidenceView = Literal["frequentist", "bayesian", "business", "validity"]
+
+VIEW_TITLES: dict[str, str] = {
+    "validity": "Data validity",
+    "frequentist": "Frequentist view",
+    "bayesian": "Bayesian view",
+    "business": "Business view",
+}
+
+VIEW_ORDER: tuple[EvidenceView, ...] = (
+    "validity",
+    "frequentist",
+    "bayesian",
+    "business",
+)
+
+CORRELATED_EVIDENCE_NOTE = (
+    "These are three summaries of the same 2x2 table of conversion counts, not "
+    "three independent experiments. Agreement between them shows the conclusion "
+    "is robust to how the evidence is summarised; it does not multiply the "
+    "evidence. A single dataset cannot supply independent corroboration."
+)
+
 _OUTCOME_LABELS: dict[str, str] = {
     "SHIP": "SHIP",
     "DONT_SHIP": "DON'T SHIP",
@@ -59,15 +114,26 @@ _OUTCOME_LABELS: dict[str, str] = {
 
 @dataclass(frozen=True, slots=True)
 class EvidenceCheck:
-    """One named criterion evaluated by the engine."""
+    """One named criterion evaluated by the engine.
+
+    `view` groups the checks by the lens that produced them. Every check is a
+    summary of the same experiment, so the grouping exists to stop them reading
+    as independent confirmations rather than to imply they are.
+    """
 
     name: str
     passed: bool
     detail: str
+    view: EvidenceView = "business"
 
     def to_row(self) -> dict[str, object]:
         """Render as a table row."""
-        return {"criterion": self.name, "passed": self.passed, "detail": self.detail}
+        return {
+            "view": VIEW_TITLES.get(self.view, self.view),
+            "criterion": self.name,
+            "passed": self.passed,
+            "detail": self.detail,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,17 +201,27 @@ class DecisionResult:
 
         return pd.DataFrame([c.to_row() for c in self.evidence])
 
+    def evidence_by_view(self) -> dict[str, tuple[EvidenceCheck, ...]]:
+        """Group the evidence by lens, in presentation order."""
+        grouped: dict[str, list[EvidenceCheck]] = {view: [] for view in VIEW_ORDER}
+        for check in self.evidence:
+            grouped.setdefault(check.view, []).append(check)
+        return {view: tuple(checks) for view, checks in grouped.items() if checks}
+
     def summary(self) -> str:
-        """Multi-line rendering."""
+        """Multi-line rendering, grouped by lens."""
         lines = [f"DECISION: {self.label}", f"  {self.headline}"]
         lines.extend(f"  - {reason}" for reason in self.reasoning)
-        lines.append("  Evidence:")
-        lines.extend(
-            f"    [{'x' if c.passed else ' '}] {c.name}: {c.detail}" for c in self.evidence
-        )
+        for view, checks in self.evidence_by_view().items():
+            lines.append(f"  {VIEW_TITLES.get(view, view)}:")
+            lines.extend(f"    [{'x' if c.passed else ' '}] {c.name}: {c.detail}" for c in checks)
+        lines.append(f"  Note: {CORRELATED_EVIDENCE_NOTE}")
         if self.design_notes:
             lines.append("  Design:")
             lines.extend(f"    - {note}" for note in self.design_notes)
+        if self.notes:
+            lines.append("  Refusal triggered by:")
+            lines.extend(f"    - {note}" for note in self.notes)
         lines.append(f"  Next: {self.recommended_action}")
         return "\n".join(lines)
 
@@ -236,6 +312,7 @@ def decide(
             name="validity checks",
             passed=True,
             detail=(f"SRM passed (p={validity.srm.p_value:.3f}); sample sizes adequate"),
+            view="validity",
         ),
         EvidenceCheck(
             name="effect clears the practical threshold",
@@ -244,6 +321,7 @@ def decide(
                 f"relative lift {inputs.relative_difference:+.2%} vs minimum worthwhile "
                 f"{th.min_practical_lift_rel:+.2%}"
             ),
+            view="business",
         ),
         EvidenceCheck(
             name="posterior supports clearing the threshold",
@@ -253,6 +331,7 @@ def decide(
                 f"{inputs.probability_clears_threshold:.2%}, threshold "
                 f"{th.min_posterior_probability:.0%}"
             ),
+            view="bayesian",
         ),
         EvidenceCheck(
             name="credible interval excludes harm",
@@ -261,6 +340,7 @@ def decide(
                 f"{th.hdi_mass:.0%} HDI on relative lift is "
                 f"[{inputs.relative_hdi_lower:+.2%}, {inputs.relative_hdi_upper:+.2%}]"
             ),
+            view="bayesian",
         ),
         EvidenceCheck(
             name="credible interval excludes the worthwhile range",
@@ -269,16 +349,19 @@ def decide(
                 f"even the optimistic end ({inputs.relative_hdi_upper:+.2%}) is below the "
                 f"{th.min_practical_lift_rel:+.2%} threshold"
             ),
+            view="bayesian",
         ),
         EvidenceCheck(
             name="expected revenue effect is positive",
             passed=inputs.expected_revenue_delta > 0.0,
             detail=f"posterior mean revenue change {inputs.expected_revenue_delta:+,.0f}",
+            view="business",
         ),
         EvidenceCheck(
             name="expected revenue effect is negative",
             passed=inputs.expected_revenue_delta < 0.0,
             detail=f"posterior mean revenue change {inputs.expected_revenue_delta:+,.0f}",
+            view="business",
         ),
         EvidenceCheck(
             name="posterior favours control",
@@ -288,6 +371,7 @@ def decide(
                 f"at or below the {th.dont_ship_posterior_threshold:.0%} threshold for "
                 "treating the change as no better than control"
             ),
+            view="bayesian",
         ),
         EvidenceCheck(
             name="frequentist interval excludes zero",
@@ -296,6 +380,7 @@ def decide(
                 f"95% CI on relative lift is "
                 f"[{inputs.relative_ci_lower:+.2%}, {inputs.relative_ci_upper:+.2%}]"
             ),
+            view="frequentist",
         ),
     ]
 
@@ -313,6 +398,11 @@ def decide(
     ]
 
     design = _design_notes(inputs, th)
+    policy_note = (
+        f"Refusal requires any one of {len(dont_ship_checks)} criteria; shipping "
+        f"requires all {len(ship_checks)}. The asymmetry is deliberate - refusing is "
+        "reversible, shipping a regression is not."
+    )
 
     if all(c.passed for c in ship_checks):
         return DecisionResult(
@@ -326,8 +416,10 @@ def decide(
                 "minimum worthwhile lift, the posterior puts a high probability on "
                 "clearing that threshold, the credible interval excludes harm, and the "
                 "expected revenue effect is positive.",
-                f"Statistical corroboration: two-sided p = {inputs.p_value_two_sided:.4f}, "
-                f"P(treatment > control) = {inputs.probability_treatment_better:.2%}.",
+                f"Two-sided p = {inputs.p_value_two_sided:.4f} is reported for "
+                "reference but did not drive this decision; power figures elsewhere in "
+                "this report are one-sided, matching the pre-registered hypothesis "
+                "that treatment beats control.",
             ),
             evidence=tuple(evidence),
             recommended_action=(
@@ -335,6 +427,7 @@ def decide(
                 "result can be compared against future experiments."
             ),
             design_notes=tuple(c.detail for c in design),
+            notes=(policy_note,),
         )
 
     triggered = [c for c in dont_ship_checks if c.passed]
@@ -361,9 +454,11 @@ def decide(
                         "converts better than control."
                     )
                 ),
-                "Note the distinction: a non-significant p-value on its own would only "
-                "mean 'not proven'; the recommendation rests on the credible interval "
-                "excluding the worthwhile range, which is a stronger statement.",
+                f"Refused on {len(triggered)} of {len(dont_ship_checks)} possible "
+                f"grounds. Note the distinction: a non-significant p-value on its own "
+                "would only mean 'not proven'; the recommendation rests on the "
+                "credible interval excluding the worthwhile range, which is a stronger "
+                "statement.",
             ),
             evidence=tuple(evidence),
             recommended_action=(
@@ -372,7 +467,10 @@ def decide(
                 "than a re-run of this one."
             ),
             design_notes=tuple(c.detail for c in design),
-            notes=tuple(f"Triggered criterion: {c.name} - {c.detail}" for c in triggered),
+            notes=(
+                policy_note,
+                *(f"Triggered criterion: {c.name} - {c.detail}" for c in triggered),
+            ),
         )
 
     failing = [c for c in ship_checks if not c.passed]

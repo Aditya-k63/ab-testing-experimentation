@@ -4,6 +4,11 @@ These are planning tools, run *before* an experiment is read. They answer the
 question the p-value cannot: given a baseline rate and a fixed sample size,
 how large an effect would this experiment have had a fair chance of detecting?
 
+Note the tail convention: these functions default to a **one-sided** test,
+matching the pre-registered hypothesis that treatment beats control. See
+`DEFAULT_ALTERNATIVE_NOTE` - the p-value reported elsewhere is two-sided, and
+the two are not directly comparable.
+
 The underlying machinery is Cohen's h, the arcsine-transformed difference
 between two proportions. It is the same statistic `statsmodels` uses for
 proportion comparisons, so results here are directly comparable with standard
@@ -20,6 +25,14 @@ from statsmodels.stats.power import NormalIndPower
 from statsmodels.stats.proportion import proportion_effectsize
 
 Alternative = Literal["two-sided", "larger"]
+
+DEFAULT_ALTERNATIVE_NOTE = (
+    "Power and MDE default to a one-sided ('larger') test, matching the "
+    "pre-registered hypothesis that treatment beats control. The reported "
+    "p-value is two-sided, so the two figures are not directly comparable: a "
+    "one-sided test is the more powerful design for a directional hypothesis. "
+    "Pass alternative='two-sided' to power the test actually being reported."
+)
 
 
 @dataclass(frozen=True, slots=True)
