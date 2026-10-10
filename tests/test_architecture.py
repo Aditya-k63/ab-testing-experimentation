@@ -98,6 +98,32 @@ class TestAppIsThin:
         modules = {module for path in python_files(APP_ROOT) for module in imported_modules(path)}
         assert any(m.startswith("experimentlens") for m in modules)
 
+    def test_dashboard_module_loads(self) -> None:
+        """The dashboard must import outside Streamlit.
+
+        Guards a class of failure pytest never sees: a bad import in `app/` is
+        invisible until someone runs `streamlit run`. The helper registers the
+        module in `sys.modules` because `@dataclass` resolves annotations through
+        it, and omitting that raises an AttributeError that looks like a fault
+        in the app when it is really a fault in the loader.
+        """
+        import sys
+
+        scripts = str(PROJECT_ROOT / "scripts")
+        sys.path.insert(0, scripts)
+        try:
+            from import_dashboard import load_dashboard_module
+
+            module = load_dashboard_module()
+        finally:
+            sys.path.remove(scripts)
+
+        for name in ("main", "run_analysis", "render_decision"):
+            assert hasattr(module, name), f"dashboard module is missing {name!r}"
+
+    def test_dashboard_import_helper_exists(self) -> None:
+        assert (PROJECT_ROOT / "scripts" / "import_dashboard.py").is_file()
+
 
 class TestDecisionLogicIsTested:
     def test_decision_module_has_a_matching_test_file(self) -> None:

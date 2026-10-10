@@ -29,7 +29,7 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev,bayes,viz]"
+          pip install -e ".[dev,bayes,app,viz]"
 
       - name: Ruff
         run: ruff check .
@@ -65,7 +65,8 @@ jobs:
           pip install -e ".[dev,bayes,app,viz]"
 
       - name: Import the app module
-        run: python -c "import importlib.util, pathlib; spec = importlib.util.spec_from_file_location('app', pathlib.Path('app/streamlit_app.py')); module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module); print('dashboard module imported cleanly')"
+        run: |
+          python scripts/import_dashboard.py
 
       - name: Headless smoke test
         run: |
